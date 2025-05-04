@@ -60,7 +60,7 @@ int BP_init(unsigned btbSize, unsigned historySize, unsigned tagSize, unsigned f
 		free(btb_table);
 	}
 
-	btb_table->fsm_table = (struct fsm)* malloc(sizeof(struct fsm) * 2^historySize * 
+	btb_table->fsm_table = (struct fsm)* malloc(sizeof(struct fsm) * 2^historySize *
 	(!isGlobalTable + (!isGlobalTable) * btbSize));
 	if(btb_table->fsm_table == NULL){
 		free(btb_table->btb_array);
@@ -73,6 +73,26 @@ int BP_init(unsigned btbSize, unsigned historySize, unsigned tagSize, unsigned f
 }
 
 bool BP_predict(uint32_t pc, uint32_t *dst){
+	*dst = pc + 4; //will be changed if pc tag exists in btb_table
+
+	unsigned int input_btb_line = (pc >> 2) % btb_table->btbSize;
+	//checking if the btb_table line has a branch command, if we end up not using ist_p it needs to be changed
+	if (btb_table->btb_array[input_btb_line].history_p == NULL) {
+		return false;
+	}
+	unsigned int input_tag;
+	input_tag = pc % (2 ^ (btb_table->tagSize));
+	if (btb_table->btb_array[input_btb_line].tag != input_tag) {
+		//might need to call BP_update, i think not
+		return false;
+	}
+	*dst = btb_table->btb_array[input_btb_line].target;
+	bool is_branch_taken = (btb_table->btb_array[input_btb_line].fsm_p->state >>1);
+	return is_branch_taken;
+
+
+
+
 	return false;
 }
 
