@@ -20,8 +20,6 @@ struct BTB{
 struct BTB_ITEM{
 	unsigned int tag;
 	unsigned int target;
-	struct history* history_p;
-	struct fsm* fsm_p;
 	bool initialized;
 };
 
@@ -43,6 +41,9 @@ int BP_init(unsigned btbSize, unsigned historySize, unsigned tagSize, unsigned f
 		return -1;
 	}
 	btb_table->btb_array = (struct BTB_ITEM)* malloc(sizeof(struct BTB_ITEM) * btbSize);
+	for (int i=0; i<btbSize; i++){
+		btb_table->btb_array[i].initialized = false;
+	}
 	if(!btb_table->btb_array){
 		free(btb_table);
 		return -1;
@@ -61,6 +62,11 @@ int BP_init(unsigned btbSize, unsigned historySize, unsigned tagSize, unsigned f
 		free(btb_table);
 	}
 
+	//we need a defualt history state
+	for (int i=0; i<(!isGlobalHist + (isGlobalHist)* btbSize); i++){
+		btb_table->history_array[i].history = 0;
+	}
+
 	btb_table->fsm_table = (struct fsm)* malloc(sizeof(struct fsm) * 2^historySize *
 	(!isGlobalTable + (!isGlobalTable) * btbSize));
 	if(btb_table->fsm_table == NULL){
@@ -69,6 +75,10 @@ int BP_init(unsigned btbSize, unsigned historySize, unsigned tagSize, unsigned f
 		free(btb_table);
 	}
 
+	//we need a default fsm prediction
+	for (int i=0; i<2^historySize * (!isGlobalTable + (!isGlobalTable) * btbSize)>; i++){
+		btb_table->fsm_table[i].state = fsmState;
+	}
 
 	return 0;
 }
@@ -78,11 +88,10 @@ bool BP_predict(uint32_t pc, uint32_t *dst){
 
 	unsigned int input_btb_line = (pc >> 2) % btb_table->btbSize;
 	//checking if the btb_table line has a branch command, if we end up not using ist_p it needs to be changed
-	if (btb_table->btb_array[input_btb_line].initialized == flase) {
+	if (btb_table->btb_array[input_btb_line].initialized == false) {
 		return false;
 	}
-	unsigned int input_tag;
-	input_tag = pc % (2 ^ (btb_table->tagSize));
+	unsigned int input_tag = pc % (2 ^ (btb_table->tagSize));
 	if (btb_table->btb_array[input_btb_line].tag != input_tag) {
 		//might need to call BP_update, i think not
 		return false;
@@ -102,7 +111,46 @@ bool BP_predict(uint32_t pc, uint32_t *dst){
 	return is_branch_taken;
 }
 
+//TODO: init history and fsm input: input_btb_line, global states
+//TODO: function that takes into account of shared or not
+//TODO: function that updates both fsm and history
+
 void BP_update(uint32_t pc, uint32_t targetPc, bool taken, uint32_t pred_dst){
+	//check if pc is already in table
+	unsigned int input_btb_line = (pc >> 2) % btb_table->btbSize;
+	unsigned int input_tag = pc % (2 ^ (btb_table->tagSize));
+
+	if (btb_table->btb_array[input_btb_line].initialized == false) {
+		btb_table->btb_array[input_btb_line].initialized = true;
+		btb_table->btb_array[input_btb_line].tag = input_tag;
+		btb_table->btb_array[input_btb_line].target = targetPc;
+		update();
+	}
+
+	else if (btb_table->btb_array[input_btb_line].tag != input_tag) {
+		btb_table->btb_array[input_btb_line].tag = input_tag;
+		btb_table->btb_array[input_btb_line].target = targetPc;
+		init(input_btb_line);
+		update();
+	}
+
+	else if(btb_table->btb_array[input_btb_line].tag == input_tag) {
+		if (targetPc != pred_dst){
+			btb_table->btb_array[input_btb_line].target = targetPc;
+			init(input_btb_line);
+			update();
+		}
+		//update() withpur initializing
+
+
+	}
+	
+
+	// now we know that the tag of pc is already in the table
+
+
+
+
 	return;
 }
 
@@ -110,3 +158,8 @@ void BP_GetStats(SIM_stats *curStats){
 	return;
 }
 
+struct BTB_ITEM{
+	unsigned int tag;
+	unsigned int target;
+	bool initialized;
+};
