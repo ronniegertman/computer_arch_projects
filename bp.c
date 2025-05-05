@@ -22,6 +22,7 @@ struct BTB_ITEM{
 	unsigned int target;
 	struct history* history_p;
 	struct fsm* fsm_p;
+	bool initialized;
 };
 
 struct history{
@@ -77,7 +78,7 @@ bool BP_predict(uint32_t pc, uint32_t *dst){
 
 	unsigned int input_btb_line = (pc >> 2) % btb_table->btbSize;
 	//checking if the btb_table line has a branch command, if we end up not using ist_p it needs to be changed
-	if (btb_table->btb_array[input_btb_line].history_p == NULL) {
+	if (btb_table->btb_array[input_btb_line].initialized == flase) {
 		return false;
 	}
 	unsigned int input_tag;
@@ -87,13 +88,18 @@ bool BP_predict(uint32_t pc, uint32_t *dst){
 		return false;
 	}
 	*dst = btb_table->btb_array[input_btb_line].target;
-	bool is_branch_taken = (btb_table->btb_array[input_btb_line].fsm_p->state >>1);
+	// bool is_branch_taken = (btb_table->btb_array[input_btb_line].fsm_p->state >>1);
+	bool is_branch_taken;
+	char history_state = btb->isGlobalHistory ? 
+		btb_table->history_array[0] : btb_table->history_array[input_btb_line];
+
+	if (btb->isGlobalTable) {
+		is_branch_taken = btb_table->fsm_table[history_state].state >> 1;
+	} else {
+		is_branch_taken = btb_table->fsm_table[input_btb_line * 2^btb_table->historySize + history_state].state >> 1;
+	}
+	
 	return is_branch_taken;
-
-
-
-
-	return false;
 }
 
 void BP_update(uint32_t pc, uint32_t targetPc, bool taken, uint32_t pred_dst){
