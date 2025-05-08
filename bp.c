@@ -13,7 +13,12 @@ typedef enum{
 	STATE_11 = 3
 } State;
 
-State next_state(State current, bool input, long index);
+void init_fsm(unsigned int line);
+void init_history(unsigned int line);
+void init(unsigned int line);
+void update(unsigned int line, bool taken, uint32_t pc);
+State next_state(State current, bool input, unsigned int index);
+unsigned int calc_fsm_index(unsigned int line, uint32_t pc);
 
 struct BTB{
 	struct BTB_ITEM* btb_array;
@@ -23,8 +28,8 @@ struct BTB{
 	unsigned int fsmDefaultState;
 	bool isGlobalHist;
 	bool isGlobalTable;
-	int Shared;
-	struct history* history_array;
+	int Shared; //0 not shared, 1 mid, 2 lsb ?
+	char* history_array;
 	struct fsm* fsm_table;
 };
 
@@ -34,10 +39,6 @@ struct BTB_ITEM{
 	bool initialized;
 };
 
-//we need to set this size cousemek
-struct history{
-	char history;
-};
 
 struct fsm{
 	State state;
@@ -68,7 +69,7 @@ int BP_init(unsigned btbSize, unsigned historySize, unsigned tagSize, unsigned f
 	btb_table->isGlobalTable = isGlobalTable;
 	btb_table->Shared = Shared;
 
-	btb_table->history_array = (struct history*) malloc(sizeof(struct history) * (isGlobalHist + (!isGlobalHist)* btbSize));
+	btb_table->history_array = (char*) malloc(isGlobalHist + (!isGlobalHist)* btbSize);
 	if(btb_table->history_array == NULL){
 		free(btb_table->btb_array);
 		free(btb_table);
@@ -76,7 +77,7 @@ int BP_init(unsigned btbSize, unsigned historySize, unsigned tagSize, unsigned f
 
 	//we need a defualt history state
 	for (int i=0; i<(isGlobalHist + (!isGlobalHist)* btbSize); i++){
-		btb_table->history_array[i].history = 0;
+		btb_table->history_array[i] = 0;
 	}
 
 	btb_table->fsm_table = (struct fsm*) malloc(sizeof(struct fsm) * pow(2, historySize) *
@@ -95,6 +96,32 @@ int BP_init(unsigned btbSize, unsigned historySize, unsigned tagSize, unsigned f
 	return 0;
 }
 
+unsigned int calc_fsm_index(unsigned int line, uint32_t pc){
+	char history_state = (btb_table->isGlobalHist) ?
+			btb_table->history_array[0] : btb_table->history_array[line];
+	unsigned int fsm_index;
+	char new_index;
+	switch(btb_table->Shared){
+		case 0:
+			fsm_index = btb_table->isGlobalTable ? history_state :
+				line * (1 << btb_table->historySize) + history_state;
+		case 1:
+			//calculating the new fsm index
+			new_index = history_state ^ ((pc >> 2) % btb_table->historySize);
+			fsm_index =  btb_table->isGlobalTable ? new_index :
+							line * (1 << btb_table->historySize) + history_state;
+		case 2:
+			new_index = history_state ^ ((pc >> 16) % btb_table->historySize);
+			fsm_index = btb_table->isGlobalTable ? new_index :
+					line * (1<<btb_table->historySize) + history_state;
+		default:
+			fsm_index = history_state;
+	}
+	return fsm_index;
+
+
+}
+
 bool BP_predict(uint32_t pc, uint32_t *dst){
 	*dst = pc + 4; //will be changed if pc tag exists in btb_table
 
@@ -111,14 +138,16 @@ bool BP_predict(uint32_t pc, uint32_t *dst){
 	*dst = btb_table->btb_array[input_btb_line].target;
 	// bool is_branch_taken = (btb_table->btb_array[input_btb_line].fsm_p->state >>1);
 	bool is_branch_taken;
-	char history_state = (btb_table->isGlobalHist) ?
-		btb_table->history_array[0].history : btb_table->history_array[input_btb_line].history;
-
-	if (btb_table->isGlobalTable) {
-		is_branch_taken = btb_table->fsm_table[history_state].state >> 1; //i think this might be wrong
-	} else {
-		is_branch_taken = btb_table->fsm_table[input_btb_line * (1 << btb_table->historySize) + history_state].state >> 1;
-	}
+	unsigned int fsm_index = calc_fsm_index(input_btb_line, pc);
+	is_branch_taken = btb_table->fsm_table[fsm_index].state >> 1;
+//	char history_state = (btb_table->isGlobalHist) ?
+//		btb_table->history_array[0] : btb_table->history_array[input_btb_line];
+//
+//	if (btb_table->isGlobalTable) {
+//		is_branch_taken = btb_table->fsm_table[history_state].state >> 1; //i think this might be wrong
+//	} else {
+//		is_branch_taken = btb_table->fsm_table[input_btb_line * (1 << btb_table->historySize) + history_state].state >> 1;
+//	}
 	
 	return is_branch_taken;
 }
@@ -138,9 +167,9 @@ void init_fsm(unsigned int line){
 
 void init_history(unsigned int line){
 	if(btb_table->isGlobalHist){
-		btb_table->history_array[0].history = 0;
+		btb_table->history_array[0] = 0;
 	}
-	btb_table->history_array[line].history = 0;
+	btb_table->history_array[line] = 0;
 }
 
 void init(unsigned int line){
@@ -150,25 +179,21 @@ void init(unsigned int line){
 //TODO: function that takes into account of shared or not
 
 //TODO: function that updates both fsm and history
-void update(unsigned int line, bool taken){
+void update(unsigned int line, bool taken, uint32_t pc){
 	char history_index = btb_table->isGlobalHist ? 0 : line;
-	char history_state = btb_table->history_array[history_index].history;
-	long fsm_index;
+	char history_state = btb_table->history_array[history_index];
+	unsigned int fsm_index;
 
 	//first we need to update the fsm table of the current history
-	if (btb_table->isGlobalTable) {
-		fsm_index = history_state;
-	} else {
-		fsm_index = line * pow(2, btb_table->historySize) + history_state;
-	}
+	fsm_index = calc_fsm_index(line, pc);
 	next_state(btb_table->fsm_table[fsm_index].state, taken, fsm_index);
 
 	//then, we update the history
-	btb_table->history_array[history_index].history = (btb_table->history_array[0].history << 1) | taken;
+	btb_table->history_array[history_index] = (btb_table->history_array[0] << 1) | taken;
 }
 
 //Updates the indexed fsm to the next state according to prediction and current state
-State next_state(State current, bool input, long index) {
+State next_state(State current, bool input, unsigned int index) {
     switch (current) {
 		//Strongly not taken
         case STATE_00:
@@ -200,27 +225,22 @@ void BP_update(uint32_t pc, uint32_t targetPc, bool taken, uint32_t pred_dst){
 		btb_table->btb_array[input_btb_line].initialized = true;
 		btb_table->btb_array[input_btb_line].tag = input_tag;
 		btb_table->btb_array[input_btb_line].target = targetPc;
-		update(input_btb_line, taken);
+		update(input_btb_line, taken, pc);
 	}
 
 	else if (btb_table->btb_array[input_btb_line].tag != input_tag) {
 		btb_table->btb_array[input_btb_line].tag = input_tag;
 		btb_table->btb_array[input_btb_line].target = targetPc;
 		init(input_btb_line);
-		update(input_btb_line, taken);
+		update(input_btb_line, taken, pc);
 	}
 
 	else if(btb_table->btb_array[input_btb_line].tag == input_tag) {
 		//is this considered false prediciton or not
+		update(input_btb_line, taken, pc);
 		if (targetPc != pred_dst){
 			btb_table->btb_array[input_btb_line].target = targetPc;
-			init(input_btb_line);
-			update(input_btb_line, taken);
-		} else{
-			//update() without initializing
-			update(input_btb_line, taken);
 		}
-
 	}
 	return;
 }
