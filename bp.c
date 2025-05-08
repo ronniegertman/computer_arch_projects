@@ -24,13 +24,20 @@ struct BTB_ITEM{
 	bool initialized;
 };
 
+typedef enum{
+	STATE_00 = 0; 
+	STATE_01 = 1;
+	STATE_10 = 2;
+	STATE_11 = 3;
+} State;
+
 //we need to set this size cousemek
 struct history{
 	char history;
 };
 
 struct fsm{
-	char state;
+	State state;
 };
 
 
@@ -138,17 +145,39 @@ void init(unsigned int line){
 	init_fsm();
 }
 //TODO: function that takes into account of shared or not
-//TODO: function that updates both fsm and history
-void update_fsm(unsigned int line, bool taken){
-	char history_index = btb->isGlobalHistory ? 0 : line;
-	btb_table->history_array[history_index] = (btb_table->history_array[0] << 1) | taken;
 
+//TODO: function that updates both fsm and history
+void update(unsigned int line, bool taken){
+	char history_index = btb->isGlobalHistory ? 0 : line;
 	char history_state = btb_table->history_array[history_index];
+
+	//first we need to update the fsm table of the current history
 	if (btb->isGlobalTable) {
-		is_branch_taken = btb_table->fsm_table[history_state].state >> 1; //i think this might be wrong
+		btb_table->fsm_table[history_state] 
 	} else {
-		is_branch_taken = btb_table->fsm_table[input_btb_line * 2^btb_table->historySize + history_state].state >> 1;
+		btb_table->fsm_table[input_btb_line * 2^btb_table->historySize + history_state]
 	}
+	//then, we update the history
+	btb_table->history_array[history_index] = (btb_table->history_array[0] << 1) | taken;
+}
+
+State next_state(State current, int input) {
+    switch (current) {
+		//Strongly not taken
+        case STATE_00:
+            return input ? STATE_01 : STATE_00;
+		//Weakly not taken
+        case STATE_01:
+            return input ? STATE_10 : STATE_00;
+		//Weakly taken
+        case STATE_10:
+            return input ? STATE_11 : STATE_01;
+		//Strongly taken
+        case STATE_11:
+            return input ? STATE_11 : STATE_10;
+        default:
+            return STATE_00; // default to safe state
+    }
 }
 
 void BP_update(uint32_t pc, uint32_t targetPc, bool taken, uint32_t pred_dst){
