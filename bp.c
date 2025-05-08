@@ -197,33 +197,28 @@ void BP_update(uint32_t pc, uint32_t targetPc, bool taken, uint32_t pred_dst){
 		btb_table->btb_array[input_btb_line].initialized = true;
 		btb_table->btb_array[input_btb_line].tag = input_tag;
 		btb_table->btb_array[input_btb_line].target = targetPc;
-		update();
+		update(input_btb_line, taken);
 	}
 
 	else if (btb_table->btb_array[input_btb_line].tag != input_tag) {
 		btb_table->btb_array[input_btb_line].tag = input_tag;
 		btb_table->btb_array[input_btb_line].target = targetPc;
 		init(input_btb_line);
-		update();
+		update(input_btb_line, taken);
 	}
 
 	else if(btb_table->btb_array[input_btb_line].tag == input_tag) {
+		//is this considered false prediciton or not
 		if (targetPc != pred_dst){
 			btb_table->btb_array[input_btb_line].target = targetPc;
 			init(input_btb_line);
-			update();
+			update(input_btb_line, taken);
+		} else{
+			//update() without initializing
+			update(line, taken);
 		}
-		//update() without initializing
-
 
 	}
-	
-
-	// now we know that the tag of pc is already in the table
-
-
-
-
 	return;
 }
 
