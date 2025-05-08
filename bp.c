@@ -46,6 +46,8 @@ struct fsm{
 
 
 struct BTB* btb_table;
+static int pred_count = 0;
+static int flush_count = 0;
 
 int BP_init(unsigned btbSize, unsigned historySize, unsigned tagSize, unsigned fsmState,
 			bool isGlobalHist, bool isGlobalTable, int Shared){
@@ -107,7 +109,7 @@ unsigned int calc_fsm_index(unsigned int line, uint32_t pc){
 				line * (1 << btb_table->historySize) + history_state;
 		case 1:
 			//calculating the new fsm index
-			new_index = history_state ^ ((pc >> 2) % btb_table->historySize);
+			new_index = history_state ^ ((pc >> 2) % btb_table->historySize); //i think it should be btb size
 			fsm_index =  btb_table->isGlobalTable ? new_index :
 							line * (1 << btb_table->historySize) + history_state;
 		case 2:
@@ -123,6 +125,7 @@ unsigned int calc_fsm_index(unsigned int line, uint32_t pc){
 }
 
 bool BP_predict(uint32_t pc, uint32_t *dst){
+	pred_count++; //for the stats func
 	*dst = pc + 4; //will be changed if pc tag exists in btb_table
 
 	unsigned int input_btb_line = (pc >> 2) % btb_table->btbSize;
@@ -217,9 +220,16 @@ State next_state(State current, bool input, unsigned int index) {
 }
 
 void BP_update(uint32_t pc, uint32_t targetPc, bool taken, uint32_t pred_dst){
+
 	//check if pc is already in table
 	unsigned int input_btb_line = (pc >> 2) % btb_table->btbSize;
 	unsigned int input_tag = pc % (2 ^ (btb_table->tagSize));
+	//check if pred was correct
+	unsigned int fsm_index = calc_fsm_index(input_btb_line, pc);
+	bool pred_taken = btb_table->fsm_table[fsm_index].state >> 1;
+	if (taken != pred_taken || (targetPc != pred_dst)) {
+		flush_count++;
+	}
 
 	if (btb_table->btb_array[input_btb_line].initialized == false) {
 		btb_table->btb_array[input_btb_line].initialized = true;
@@ -246,6 +256,20 @@ void BP_update(uint32_t pc, uint32_t targetPc, bool taken, uint32_t pred_dst){
 }
 
 void BP_GetStats(SIM_stats *curStats){
+	curStats->br_num  = pred_count;
+	curStats->flush_num  = flush_count;
+	int btb_size = btb_table->btbSize;
+	int tag_size = btb_table->tagSize;
+	bool isGlobalHist = btb_table->isGlobalHist;
+	bool isGlobalTable = btb_table->isGlobalTable;
+	int historySize = btb_table->historySize;
+	curStats->size = btb_size*(1 + tag_size + 32) +
+		(isGlobalHist ? 1 : btb_size) * (1 + historySize) +
+			(isGlobalTable ? 1 : btb_size) * 2 * pow(2, historySize) ;
+	free(btb_table->fsm_table);
+	free(btb_table->history_array);
+	free(btb_table->btb_array);
+	free(btb_table);
 	return;
 }
 
