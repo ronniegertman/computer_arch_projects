@@ -150,30 +150,38 @@ void init(unsigned int line){
 void update(unsigned int line, bool taken){
 	char history_index = btb->isGlobalHistory ? 0 : line;
 	char history_state = btb_table->history_array[history_index];
+	long fsm_index;
 
 	//first we need to update the fsm table of the current history
-	if (btb->isGlobalTable) {
-		btb_table->fsm_table[history_state] 
+	if (btb_table->isGlobalTable) {
+		fsm_index = history_state;
 	} else {
-		btb_table->fsm_table[input_btb_line * 2^btb_table->historySize + history_state]
+		fsm_index = input_btb_line * pow(2, btb_table->historySize) + history_state;
 	}
+	next_state(btb_table->fsm_table[fsm_index].state, taken, fsm_index);
+
 	//then, we update the history
 	btb_table->history_array[history_index] = (btb_table->history_array[0] << 1) | taken;
 }
 
-State next_state(State current, int input) {
+//Updates the indexed fsm to the next state according to prediction and current state
+State next_state(State current, bool input, long index) {
     switch (current) {
 		//Strongly not taken
         case STATE_00:
+			btb_table->fsm_table[index].state = input ? STATE_01 : STATE_00;
             return input ? STATE_01 : STATE_00;
 		//Weakly not taken
         case STATE_01:
+			btb_table->fsm_table[index].state = input ? STATE_10 : STATE_00;
             return input ? STATE_10 : STATE_00;
 		//Weakly taken
         case STATE_10:
+			btb_table->fsm_table[index].state = input ? STATE_11 : STATE_01;
             return input ? STATE_11 : STATE_01;
 		//Strongly taken
         case STATE_11:
+			btb_table->fsm_table[index].state = input ? STATE_11 : STATE_10;
             return input ? STATE_11 : STATE_10;
         default:
             return STATE_00; // default to safe state
