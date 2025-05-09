@@ -28,7 +28,7 @@ struct BTB{
 	unsigned int fsmDefaultState;
 	bool isGlobalHist;
 	bool isGlobalTable;
-	int Shared; //0 not shared, 1 mid, 2 lsb ?
+	int Shared; //0 not shared, 1 lsb, 2 mid 
 	char* history_array;
 	struct fsm* fsm_table;
 };
@@ -101,27 +101,28 @@ int BP_init(unsigned btbSize, unsigned historySize, unsigned tagSize, unsigned f
 unsigned int calc_fsm_index(unsigned int line, uint32_t pc){
 	char history_state = (btb_table->isGlobalHist) ?
 			btb_table->history_array[0] : btb_table->history_array[line];
+	//history might be smaller than 8 bits
+	history_state = history_state % (1 << btb_table->historySize);
 	unsigned int fsm_index;
 	char new_index;
 	switch(btb_table->Shared){
 		case 0:
+		//not using shared
 			fsm_index = btb_table->isGlobalTable ? history_state :
 				line * (1 << btb_table->historySize) + history_state;
 		case 1:
 			//calculating the new fsm index
-			new_index = history_state ^ ((pc >> 2) % btb_table->historySize); //i think it should be btb size
+			new_index = history_state ^ ((pc >> 2) % (1 << btb_table->historySize)); //i think it should be btb size
 			fsm_index =  btb_table->isGlobalTable ? new_index :
 							line * (1 << btb_table->historySize) + history_state;
 		case 2:
-			new_index = history_state ^ ((pc >> 16) % btb_table->historySize);
+			new_index = history_state ^ ((pc >> 16) % (1 << btb_table->historySize));
 			fsm_index = btb_table->isGlobalTable ? new_index :
 					line * (1<<btb_table->historySize) + history_state;
 		default:
 			fsm_index = history_state;
 	}
 	return fsm_index;
-
-
 }
 
 bool BP_predict(uint32_t pc, uint32_t *dst){
@@ -133,7 +134,7 @@ bool BP_predict(uint32_t pc, uint32_t *dst){
 	if (btb_table->btb_array[input_btb_line].initialized == false) {
 		return false;
 	}
-	unsigned int input_tag = pc % (2 ^ (btb_table->tagSize));
+	unsigned int input_tag = pc % (1 << (btb_table->tagSize));
 	if (btb_table->btb_array[input_btb_line].tag != input_tag) {
 		//might need to call BP_update, i think not
 		return false;
@@ -158,10 +159,7 @@ bool BP_predict(uint32_t pc, uint32_t *dst){
 //TODO: init history and fsm input: input_btb_line, global states
 void init_fsm(unsigned int line){
 	for (int i=0; i<pow(2, btb_table->historySize); i++){
-		if (btb_table->isGlobalTable) {
-			btb_table->fsm_table[i].state = btb_table->fsmDefaultState;
-		} 
-		else {
+		if (!btb_table->isGlobalTable) {
 			btb_table->fsm_table[line * (1 << btb_table->historySize) + i].state = btb_table->fsmDefaultState;
 		}
 	}
@@ -169,26 +167,24 @@ void init_fsm(unsigned int line){
 }
 
 void init_history(unsigned int line){
-	if(btb_table->isGlobalHist){
-		btb_table->history_array[0] = 0;
+	if(!btb_table->isGlobalHist){
+		btb_table->history_array[line] = 0;
 	}
-	btb_table->history_array[line] = 0;
 }
 
 void init(unsigned int line){
 	init_history(line);
 	init_fsm(line);
 }
-//TODO: function that takes into account of shared or not
+
 
 //TODO: function that updates both fsm and history
 void update(unsigned int line, bool taken, uint32_t pc){
 	char history_index = btb_table->isGlobalHist ? 0 : line;
-	char history_state = btb_table->history_array[history_index];
-	unsigned int fsm_index;
+	char history_state = btb_table->history_array[history_index] % (1 << btb_table->historySize);
 
 	//first we need to update the fsm table of the current history
-	fsm_index = calc_fsm_index(line, pc);
+	unsigned int fsm_index = calc_fsm_index(line, pc);
 	next_state(btb_table->fsm_table[fsm_index].state, taken, fsm_index);
 
 	//then, we update the history
@@ -264,7 +260,7 @@ void BP_GetStats(SIM_stats *curStats){
 	bool isGlobalTable = btb_table->isGlobalTable;
 	int historySize = btb_table->historySize;
 	curStats->size = btb_size*(1 + tag_size + 32) +
-		(isGlobalHist ? 1 : btb_size) * (1 + historySize) +
+		(isGlobalHist ? 1 : btb_size) * (historySize) +
 			(isGlobalTable ? 1 : btb_size) * 2 * pow(2, historySize) ;
 	free(btb_table->fsm_table);
 	free(btb_table->history_array);
