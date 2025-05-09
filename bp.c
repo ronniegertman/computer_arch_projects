@@ -110,15 +110,18 @@ unsigned int calc_fsm_index(unsigned int line, uint32_t pc){
 		//not using shared
 			fsm_index = btb_table->isGlobalTable ? history_state :
 				line * (1 << btb_table->historySize) + history_state;
+			break;
 		case 1:
 			//calculating the new fsm index
 			new_index = history_state ^ ((pc >> 2) % (1 << btb_table->historySize)); //i think it should be btb size
 			fsm_index =  btb_table->isGlobalTable ? new_index :
 							line * (1 << btb_table->historySize) + history_state;
+			break;
 		case 2:
 			new_index = history_state ^ ((pc >> 16) % (1 << btb_table->historySize));
 			fsm_index = btb_table->isGlobalTable ? new_index :
 					line * (1<<btb_table->historySize) + history_state;
+			break;
 		default:
 			fsm_index = history_state;
 	}
@@ -134,12 +137,11 @@ bool BP_predict(uint32_t pc, uint32_t *dst){
 	if (btb_table->btb_array[input_btb_line].initialized == false) {
 		return false;
 	}
-	unsigned int input_tag = pc % (1 << (btb_table->tagSize));
+	unsigned int input_tag = ((pc >> (30 - btb_table->tagSize)));
 	if (btb_table->btb_array[input_btb_line].tag != input_tag) {
 		//might need to call BP_update, i think not
 		return false;
 	}
-	*dst = btb_table->btb_array[input_btb_line].target;
 	// bool is_branch_taken = (btb_table->btb_array[input_btb_line].fsm_p->state >>1);
 	bool is_branch_taken;
 	unsigned int fsm_index = calc_fsm_index(input_btb_line, pc);
@@ -152,7 +154,9 @@ bool BP_predict(uint32_t pc, uint32_t *dst){
 //	} else {
 //		is_branch_taken = btb_table->fsm_table[input_btb_line * (1 << btb_table->historySize) + history_state].state >> 1;
 //	}
-	
+	if (is_branch_taken) {
+		*dst = btb_table->btb_array[input_btb_line].target;
+	}
 	return is_branch_taken;
 }
 
@@ -188,7 +192,7 @@ void update(unsigned int line, bool taken, uint32_t pc){
 	next_state(btb_table->fsm_table[fsm_index].state, taken, fsm_index);
 
 	//then, we update the history
-	btb_table->history_array[history_index] = (btb_table->history_array[0] << 1) | taken;
+	btb_table->history_array[history_index] = (btb_table->history_array[history_index] << 1) | taken;
 }
 
 //Updates the indexed fsm to the next state according to prediction and current state
@@ -219,11 +223,11 @@ void BP_update(uint32_t pc, uint32_t targetPc, bool taken, uint32_t pred_dst){
 
 	//check if pc is already in table
 	unsigned int input_btb_line = (pc >> 2) % btb_table->btbSize;
-	unsigned int input_tag = pc % (2 ^ (btb_table->tagSize));
+	unsigned int input_tag = ((pc >> (30 - btb_table->tagSize)));
 	//check if pred was correct
 	unsigned int fsm_index = calc_fsm_index(input_btb_line, pc);
 	bool pred_taken = btb_table->fsm_table[fsm_index].state >> 1;
-	if (taken != pred_taken || (targetPc != pred_dst)) {
+	if ((taken != pred_taken) || ((targetPc != pred_dst) && (pred_taken == 1))) {
 		flush_count++;
 	}
 
