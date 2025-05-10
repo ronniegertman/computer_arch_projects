@@ -3,6 +3,7 @@
 
 #include "bp_api.h"
 #include <stdlib.h>
+#include <stdio.h>
 #include <math.h>
 
 
@@ -73,7 +74,7 @@ int BP_init(unsigned btbSize, unsigned historySize, unsigned tagSize, unsigned f
 	btb_table->isGlobalTable = isGlobalTable;
 	btb_table->Shared = Shared;
 
-	btb_table->history_array = (char*) malloc(isGlobalHist + (!isGlobalHist)* btbSize);
+	btb_table->history_array = (unsigned char*) malloc(isGlobalHist + (!isGlobalHist)* btbSize);
 	if(btb_table->history_array == NULL){
 		free(btb_table->btb_array);
 		free(btb_table);
@@ -153,8 +154,7 @@ bool BP_predict(uint32_t pc, uint32_t *dst){
 
 	bool is_branch_taken;
 	unsigned int fsm_index = calc_fsm_index(input_btb_line, pc);
-//	printf("\nfsm index is %u\n", fsm_index);
-//	printf("pc is 0x%X line is %u \n", pc, input_btb_line);
+
 
 	is_branch_taken = btb_table->fsm_table[fsm_index].state >> 1;
 
@@ -273,7 +273,7 @@ void BP_GetStats(SIM_stats *curStats){
 	bool isGlobalHist = btb_table->isGlobalHist;
 	bool isGlobalTable = btb_table->isGlobalTable;
 	int historySize = btb_table->historySize;
-	curStats->size = btb_size*(1 + tag_size + 32) +
+	curStats->size = btb_size*(1 + tag_size + 30) +
 		(isGlobalHist ? 1 : btb_size) * (historySize) +
 			(isGlobalTable ? 1 : btb_size) * 2 * pow(2, historySize) ;
 	free(btb_table->fsm_table);
