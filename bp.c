@@ -4,6 +4,7 @@
 #include "bp_api.h"
 #include <stdlib.h>
 #include <math.h>
+#include <stdio.h>
 
 
 typedef enum{
@@ -113,7 +114,7 @@ unsigned int calc_fsm_index(unsigned int line, uint32_t pc){
 			break;
 		case 1:
 			//calculating the new fsm index
-			new_index = history_state ^ ((pc >> 2) % (1 << btb_table->historySize)); 
+			new_index = history_state ^ ((pc >> 2) % (1 << btb_table->historySize)); //i think it should be btb size
 			fsm_index =  btb_table->isGlobalTable ? new_index :
 							line * (1 << btb_table->historySize) + history_state;
 			break;
@@ -130,28 +131,34 @@ unsigned int calc_fsm_index(unsigned int line, uint32_t pc){
 
 bool BP_predict(uint32_t pc, uint32_t *dst){
 	pred_count++; //for the stats func
-	*dst = pc + 4; // will be changed if pc tag exists in btb_table
+	*dst = pc + 4; //will be changed if pc tag exists in btb_table
 
 	unsigned int input_btb_line = (pc >> 2) % btb_table->btbSize;
 	//checking if the btb_table line has a branch command, if we end up not using ist_p it needs to be changed
 	if (btb_table->btb_array[input_btb_line].initialized == false) {
 		return false;
 	}
-	//this takes the pc and shifts it to only have the tag bits
-	//for exaple : ZZZZZZZZZZZZXXXXXYYYY00 this takes the X bytes.
-	unsigned int input_tag = (pc >> (2 + btb_table->btbSize)) % (1 << btb_table->tagSize);
+	unsigned int input_tag = ((pc >> (30 - btb_table->tagSize)));
 	if (btb_table->btb_array[input_btb_line].tag != input_tag) {
+		//might need to call BP_update, i think not
 		return false;
 	}
-
+	// bool is_branch_taken = (btb_table->btb_array[input_btb_line].fsm_p->state >>1);
 	bool is_branch_taken;
 	unsigned int fsm_index = calc_fsm_index(input_btb_line, pc);
-
 	is_branch_taken = btb_table->fsm_table[fsm_index].state >> 1;
-
+//	char history_state = (btb_table->isGlobalHist) ?
+//		btb_table->history_array[0] : btb_table->history_array[input_btb_line];
+//
+//	if (btb_table->isGlobalTable) {
+//		is_branch_taken = btb_table->fsm_table[history_state].state >> 1; //i think this might be wrong
+//	} else {
+//		is_branch_taken = btb_table->fsm_table[input_btb_line * (1 << btb_table->historySize) + history_state].state >> 1;
+//	}
 	if (is_branch_taken) {
 		*dst = btb_table->btb_array[input_btb_line].target;
 	}
+	printf("fsm state is %d\n", btb_table->fsm_table[fsm_index].state);
 	return is_branch_taken;
 }
 
@@ -180,14 +187,17 @@ void init(unsigned int line){
 //TODO: function that updates both fsm and history
 void update(unsigned int line, bool taken, uint32_t pc){
 	char history_index = btb_table->isGlobalHist ? 0 : line;
-	char history_state = btb_table->history_array[history_index] % (1 << btb_table->historySize);
+	//history might be smaller than 8 bits
+	//char history_state = btb_table->history_array[history_index] % (1 << btb_table->historySize);
 
 	//first we need to update the fsm table of the current history
 	unsigned int fsm_index = calc_fsm_index(line, pc);
 	next_state(btb_table->fsm_table[fsm_index].state, taken, fsm_index);
 
 	//then, we update the history
-	btb_table->history_array[history_index] = (btb_table->history_array[history_index] << 1) | taken;
+	int mask = (1 << btb_table->historySize) - 1;
+	btb_table->history_array[history_index] =
+		((btb_table->history_array[history_index] << 1) | taken) & mask;
 }
 
 //Updates the indexed fsm to the next state according to prediction and current state
@@ -218,14 +228,23 @@ void BP_update(uint32_t pc, uint32_t targetPc, bool taken, uint32_t pred_dst){
 
 	//check if pc is already in table
 	unsigned int input_btb_line = (pc >> 2) % btb_table->btbSize;
-	// unsigned int input_tag = ((pc >> (30 - btb_table->tagSize)));
-	unsigned int input_tag = (pc >> (2 + btb_table->btbSize)) % (1 << btb_table->tagSize);
+	unsigned int input_tag = ((pc >> (30 - btb_table->tagSize)));
 	//check if pred was correct
 	unsigned int fsm_index = calc_fsm_index(input_btb_line, pc);
+
 	bool pred_taken = btb_table->fsm_table[fsm_index].state >> 1;
+	if (btb_table->btb_array[input_btb_line].initialized == false ||
+		btb_table->btb_array[input_btb_line].tag != input_tag) {
+		pred_taken = false;
+	}
+	printf("%d\n", pred_count);
+	printf("fsm state is %d\n", btb_table->fsm_table[fsm_index].state);
+	printf("jump was actually %d\n", taken);
 	if ((taken != pred_taken) || ((targetPc != pred_dst) && (pred_taken == 1))) {
+		printf("Flushing BTB\n");
 		flush_count++;
 	}
+	printf("\n\n");
 
 	if (btb_table->btb_array[input_btb_line].initialized == false) {
 		btb_table->btb_array[input_btb_line].initialized = true;
@@ -269,40 +288,4 @@ void BP_GetStats(SIM_stats *curStats){
 	return;
 }
 
-
-void print_table(){
-		printf("BTB Table:\n");
-		printf("Line\tInitialized\tTag\t\tTarget\n");
-		for (unsigned int i = 0; i < btb_table->btbSize; i++) {
-			printf("%u\t%s\t\t%u\t\t%u\n", 
-				   i, 
-				   btb_table->btb_array[i].initialized ? "Yes" : "No", 
-				   btb_table->btb_array[i].tag, 
-				   btb_table->btb_array[i].target);
-			if (!btb_table->isGlobalHist) {
-				printf("\t\tHistory: %d\n", btb_table->history_array[i]);
-			}
-		}
-		if (btb_table->isGlobalHist) {
-			printf("Global History: %d\n", btb_table->history_array[0]);
-		}
-}
-
-//this works only for regular share and not xor
-void print_fsm(unsigned int btb_line) {
-	printf("FSM Table for BTB Line %u:\n", btb_line);
-	unsigned int fsm_table_size = pow(2, btb_table->historySize);
-	unsigned int start_index = btb_table->isGlobalTable ? 0 : btb_line * fsm_table_size;
-
-	for (unsigned int i = 0; i < fsm_table_size; i++) {
-		unsigned int index = start_index + i;
-		printf("Index: %u, State: %d\n", index, btb_table->fsm_table[index].state);
-	}
-
-	if (btb_table->isGlobalHist) {
-		printf("Corresponding Global History: %d\n", btb_table->history_array[0]);
-	} else {
-		printf("Corresponding History for BTB Line %u: %d\n", btb_line, btb_table->history_array[btb_line]);
-	}
-}
 
