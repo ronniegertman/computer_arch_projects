@@ -50,6 +50,13 @@ struct BTB* btb_table;
 static int pred_count = 0;
 static int flush_count = 0;
 
+unsigned int log2_uint(unsigned int x) {
+    unsigned int res = 0;
+    while (x >>= 1) res++;
+    return res;
+}
+
+
 int BP_init(unsigned btbSize, unsigned historySize, unsigned tagSize, unsigned fsmState,
 			bool isGlobalHist, bool isGlobalTable, int Shared){
 	btb_table = (struct BTB*) malloc(sizeof(struct BTB));
@@ -136,6 +143,8 @@ unsigned int calc_fsm_index(unsigned int line, uint32_t pc){
 	return fsm_index;
 }
 
+
+
 bool BP_predict(uint32_t pc, uint32_t *dst){
 	pred_count++; //for the stats func
 	*dst = pc + 4; // will be changed if pc tag exists in btb_table
@@ -147,7 +156,7 @@ bool BP_predict(uint32_t pc, uint32_t *dst){
 	}
 	//this takes the pc and shifts it to only have the tag bits
 	//for exaple : ZZZZZZZZZZZZXXXXXYYYY00 this takes the X bytes.
-	unsigned int input_tag = (pc >> (2 + btb_table->btbSize)) % (1 << btb_table->tagSize);
+	unsigned int input_tag = (pc >> (2 + log2_uint(btb_table->btbSize))) % (1 << btb_table->tagSize);
 	if (btb_table->btb_array[input_btb_line].tag != input_tag) {
 		return false;
 	}
@@ -186,22 +195,18 @@ void init(unsigned int line){
 }
 
 
-//TODO: function that updates both fsm and history
+// function that updates both fsm and history
 void update(unsigned int line, bool taken, uint32_t pc){
 	unsigned char history_index = btb_table->isGlobalHist ? 0 : line;
-	// char history_state = btb_table->history_array[history_index] % (1 << btb_table->historySize);
 	int mask = (1 << btb_table->historySize) - 1;
 	//first we need to update the fsm table of the current history
 	unsigned int fsm_index = calc_fsm_index(line, pc);
 	next_state(btb_table->fsm_table[fsm_index].state, taken, fsm_index);
 	//the history array is accessed with line, history state is LSB in history size.
-//	printf("history before change %u\n", btb_table->history_array[history_index]);
 	btb_table->history_array[history_index] = ((btb_table->history_array[history_index] << 1) | taken) & mask;
-//	printf("history state is %u\n", btb_table->history_array[history_index]);
-
 }
 
-//Updates the indexed fsm to the next state according to prediction and current state
+// Updates the indexed fsm to the next state according to prediction and current state
 State next_state(State current, bool input, unsigned int index) {
     switch (current) {
 		//Strongly not taken
@@ -229,8 +234,7 @@ void BP_update(uint32_t pc, uint32_t targetPc, bool taken, uint32_t pred_dst){
 
 	//check if pc is already in table
 	unsigned int input_btb_line = (pc >> 2) % btb_table->btbSize;
-	// unsigned int input_tag = ((pc >> (30 - btb_table->tagSize)));
-	unsigned int input_tag = (pc >> (2 + btb_table->btbSize)) % (1 << btb_table->tagSize);
+	unsigned int input_tag = (pc >> (2 + log2_uint(btb_table->btbSize))) % (1 << btb_table->tagSize);
 	//check if pred was correct
 	unsigned int fsm_index = calc_fsm_index(input_btb_line, pc);
 	bool pred_taken = btb_table->fsm_table[fsm_index].state >> 1;
