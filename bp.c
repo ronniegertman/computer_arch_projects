@@ -29,7 +29,7 @@ struct BTB{
 	bool isGlobalHist;
 	bool isGlobalTable;
 	int Shared; //0 not shared, 1 lsb, 2 mid 
-	char* history_array;
+	unsigned char* history_array;
 	struct fsm* fsm_table;
 };
 
@@ -101,13 +101,14 @@ int BP_init(unsigned btbSize, unsigned historySize, unsigned tagSize, unsigned f
 }
 
 unsigned int calc_fsm_index(unsigned int line, uint32_t pc){
-	char history_state = (btb_table->isGlobalHist) ?
+	unsigned char history_state = (btb_table->isGlobalHist) ?
 			btb_table->history_array[0] : btb_table->history_array[line];
 	//history might be smaller than 8 bits
-	int mask = (1 << btb_table->historySize) - 1;
+	unsigned char mask = (1 << btb_table->historySize) - 1;
 	history_state = history_state & mask;
 	unsigned int fsm_index;
-	char new_index;
+	unsigned char toxor;
+	unsigned char new_index;
 	switch(btb_table->Shared){
 		case 0:
 		//not using shared
@@ -115,13 +116,16 @@ unsigned int calc_fsm_index(unsigned int line, uint32_t pc){
 				line * (1 << btb_table->historySize) + history_state;
 			break;
 		case 1:
-			//calculating the new fsm index
-			new_index = history_state ^ ((pc >> 2) % (1 << btb_table->historySize)); 
+		//shared lsb
+			toxor = (pc >> 2) & mask;
+			new_index = history_state ^ toxor;
 			fsm_index =  btb_table->isGlobalTable ? new_index :
 							line * (1 << btb_table->historySize) + history_state;
 			break;
 		case 2:
-			new_index = history_state ^ ((pc >> 16) % (1 << btb_table->historySize));
+		//shared mid
+			toxor = (pc >> 16) & mask;
+			new_index = history_state ^ toxor;
 			fsm_index = btb_table->isGlobalTable ? new_index :
 					line * (1<<btb_table->historySize) + history_state;
 			break;
@@ -149,6 +153,8 @@ bool BP_predict(uint32_t pc, uint32_t *dst){
 
 	bool is_branch_taken;
 	unsigned int fsm_index = calc_fsm_index(input_btb_line, pc);
+//	printf("\nfsm index is %u\n", fsm_index);
+//	printf("pc is 0x%X line is %u \n", pc, input_btb_line);
 
 	is_branch_taken = btb_table->fsm_table[fsm_index].state >> 1;
 
@@ -182,15 +188,17 @@ void init(unsigned int line){
 
 //TODO: function that updates both fsm and history
 void update(unsigned int line, bool taken, uint32_t pc){
-	char history_index = btb_table->isGlobalHist ? 0 : line;
+	unsigned char history_index = btb_table->isGlobalHist ? 0 : line;
 	// char history_state = btb_table->history_array[history_index] % (1 << btb_table->historySize);
 	int mask = (1 << btb_table->historySize) - 1;
 	//first we need to update the fsm table of the current history
 	unsigned int fsm_index = calc_fsm_index(line, pc);
 	next_state(btb_table->fsm_table[fsm_index].state, taken, fsm_index);
-
 	//the history array is accessed with line, history state is LSB in history size.
+//	printf("history before change %u\n", btb_table->history_array[history_index]);
 	btb_table->history_array[history_index] = ((btb_table->history_array[history_index] << 1) | taken) & mask;
+//	printf("history state is %u\n", btb_table->history_array[history_index]);
+
 }
 
 //Updates the indexed fsm to the next state according to prediction and current state
