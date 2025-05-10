@@ -58,6 +58,8 @@ int BP_init(unsigned btbSize, unsigned historySize, unsigned tagSize, unsigned f
 	btb_table->btb_array = (struct BTB_ITEM*) malloc(sizeof(struct BTB_ITEM) * btbSize);
 	for (int i=0; i<btbSize; i++){
 		btb_table->btb_array[i].initialized = false;
+		btb_table->btb_array[i].tag = 0;
+		btb_table->btb_array[i].target = 0;
 	}
 	if(!btb_table->btb_array){
 		free(btb_table);
@@ -102,7 +104,8 @@ unsigned int calc_fsm_index(unsigned int line, uint32_t pc){
 	char history_state = (btb_table->isGlobalHist) ?
 			btb_table->history_array[0] : btb_table->history_array[line];
 	//history might be smaller than 8 bits
-	history_state = history_state % (1 << btb_table->historySize);
+	int mask = (1 << btb_table->historySize) - 1;
+	history_state = history_state & mask;
 	unsigned int fsm_index;
 	char new_index;
 	switch(btb_table->Shared){
@@ -180,14 +183,14 @@ void init(unsigned int line){
 //TODO: function that updates both fsm and history
 void update(unsigned int line, bool taken, uint32_t pc){
 	char history_index = btb_table->isGlobalHist ? 0 : line;
-	char history_state = btb_table->history_array[history_index] % (1 << btb_table->historySize);
-
+	// char history_state = btb_table->history_array[history_index] % (1 << btb_table->historySize);
+	int mask = (1 << btb_table->historySize) - 1;
 	//first we need to update the fsm table of the current history
 	unsigned int fsm_index = calc_fsm_index(line, pc);
 	next_state(btb_table->fsm_table[fsm_index].state, taken, fsm_index);
 
-	//then, we update the history
-	btb_table->history_array[history_index] = (btb_table->history_array[history_index] << 1) | taken;
+	//the history array is accessed with line, history state is LSB in history size.
+	btb_table->history_array[history_index] = ((btb_table->history_array[history_index] << 1) | taken) & mask;
 }
 
 //Updates the indexed fsm to the next state according to prediction and current state
@@ -223,6 +226,9 @@ void BP_update(uint32_t pc, uint32_t targetPc, bool taken, uint32_t pred_dst){
 	//check if pred was correct
 	unsigned int fsm_index = calc_fsm_index(input_btb_line, pc);
 	bool pred_taken = btb_table->fsm_table[fsm_index].state >> 1;
+	if ( !btb_table->btb_array[input_btb_line].initialized || btb_table->btb_array[input_btb_line].tag != input_tag){
+		pred_taken = false;
+	}
 	if ((taken != pred_taken) || ((targetPc != pred_dst) && (pred_taken == 1))) {
 		flush_count++;
 	}
@@ -274,7 +280,7 @@ void print_table(){
 		printf("BTB Table:\n");
 		printf("Line\tInitialized\tTag\t\tTarget\n");
 		for (unsigned int i = 0; i < btb_table->btbSize; i++) {
-			printf("%u\t%s\t\t%u\t\t%u\n", 
+			printf("%u\t%s\t\t0x%x\t\t0x%x\n", 
 				   i, 
 				   btb_table->btb_array[i].initialized ? "Yes" : "No", 
 				   btb_table->btb_array[i].tag, 
